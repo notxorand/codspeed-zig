@@ -5,8 +5,8 @@ const Command = shared.Command;
 fn assert_eq(serialized: []const u8, expected_cmd: Command) !void {
     const bincode = @import("../../bincode.zig");
 
-    var stream = std.io.fixedBufferStream(serialized);
-    const deserialized_cmd = try bincode.deserializeAlloc(stream.reader(), std.testing.allocator, Command);
+    var reader: std.Io.Reader = .fixed(serialized);
+    const deserialized_cmd = try bincode.deserializeAlloc(&reader, std.testing.allocator, Command);
     defer deserialized_cmd.deinit(std.testing.allocator);
 
     try std.testing.expect(expected_cmd.equal(deserialized_cmd));

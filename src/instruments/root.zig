@@ -12,12 +12,12 @@ pub const InstrumentHooks = union(enum) {
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) !Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !Self {
         if (ValgrindInstrument.is_instrumented()) {
             return Self{ .valgrind = ValgrindInstrument.init(allocator) };
         }
 
-        var perf_inst = perf.PerfInstrument.init(allocator) catch {
+        var perf_inst = perf.PerfInstrument.init(allocator, io) catch {
             return Self{ .none = {} };
         };
         if (perf_inst.is_instrumented()) {

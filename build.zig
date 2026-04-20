@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .link_libc = true,
         });
-        mod.addCSourceFile(.{ .file = b.path("src/helpers/valgrind_wrapper.c") });
+        mod.addCSourceFile(.{ .file = b.path("src/helpers/valgrind_wrapper.c"), .flags = &.{} });
     }
 
     // Tests
@@ -44,7 +44,7 @@ pub fn build(b: *std.Build) void {
             .test_runner = .{ .path = b.path("src/tests/runner.zig"), .mode = .simple },
             .use_llvm = true,
         });
-        test_exe.addCSourceFile(.{ .file = b.path("src/helpers/valgrind_wrapper.c") });
+        test_exe.root_module.addCSourceFile(.{ .file = b.path("src/helpers/valgrind_wrapper.c"), .flags = &.{} });
 
         const test_run = b.addRunArtifact(test_exe);
         test_step.dependOn(&test_run.step);

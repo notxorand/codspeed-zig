@@ -8,6 +8,12 @@ pub const InstrumentHooks = instruments.InstrumentHooks;
 pub const panic = if (builtin.is_test) std.debug.FullPanic(std.debug.defaultPanic) else std.debug.no_panic;
 const allocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
 
+var threaded_io: std.Io.Threaded = .init_single_threaded;
+
+fn getIo() std.Io {
+    return if (builtin.is_test) std.testing.io else threaded_io.io();
+}
+
 pub fn instrument_hooks_set_feature(feature: u64, enabled: bool) void {
     const feature_enum = @as(features.Feature, @enumFromInt(feature));
     features.set_feature(feature_enum, enabled);
@@ -18,7 +24,7 @@ pub fn instrument_hooks_init() ?*InstrumentHooks {
         return null;
     };
 
-    hooks.* = InstrumentHooks.init(allocator) catch {
+    hooks.* = InstrumentHooks.init(allocator, getIo()) catch {
         allocator.destroy(hooks);
         return null;
     };

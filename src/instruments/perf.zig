@@ -5,16 +5,18 @@ const shared = @import("../shared.zig");
 
 pub const PerfInstrument = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     writer: fifo.UnixPipe.Writer,
     reader: fifo.UnixPipe.Reader,
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) !Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !Self {
         return .{
             .allocator = allocator,
-            .writer = try fifo.UnixPipe.openWrite(allocator, shared.RUNNER_CTL_FIFO),
-            .reader = try fifo.UnixPipe.openRead(allocator, shared.RUNNER_ACK_FIFO),
+            .io = io,
+            .writer = try fifo.UnixPipe.openWrite(allocator, io, shared.RUNNER_CTL_FIFO),
+            .reader = try fifo.UnixPipe.openRead(allocator, io, shared.RUNNER_ACK_FIFO),
         };
     }
 
@@ -70,13 +72,15 @@ pub const PerfInstrument = struct {
 test "perf integration" {
     const allocator = std.testing.allocator;
 
-    try fifo.UnixPipe.create(shared.RUNNER_ACK_FIFO);
-    try fifo.UnixPipe.create(shared.RUNNER_CTL_FIFO);
+    const io = std.testing.io;
 
-    var ctl_fifo = try fifo.UnixPipe.openRead(allocator, shared.RUNNER_CTL_FIFO);
+    try fifo.UnixPipe.create(io, shared.RUNNER_ACK_FIFO);
+    try fifo.UnixPipe.create(io, shared.RUNNER_CTL_FIFO);
+
+    var ctl_fifo = try fifo.UnixPipe.openRead(allocator, io, shared.RUNNER_CTL_FIFO);
     defer ctl_fifo.deinit();
 
-    var ack_fifo = try fifo.UnixPipe.openWrite(allocator, shared.RUNNER_ACK_FIFO);
+    var ack_fifo = try fifo.UnixPipe.openWrite(allocator, io, shared.RUNNER_ACK_FIFO);
     defer ack_fifo.deinit();
 
     const FifoTester = struct {
@@ -88,7 +92,7 @@ test "perf integration" {
         error_occurred: bool = false,
 
         pub fn func(ctx: *@This()) void {
-            const received_cmd = ctx.ctl_pipe.recvCmd() catch |err| {
+            const received_cmd = ctx.ctl_pipe.waitForResponse(std.time.ns_per_s) catch |err| {
                 std.debug.print("Failed to receive command: {}\n", .{err});
                 ctx.error_occurred = true;
                 return;
@@ -125,7 +129,7 @@ test "perf integration" {
         .ack_pipe = &ack_fifo,
     };
 
-    var perf = try PerfInstrument.init(allocator);
+    var perf = try PerfInstrument.init(allocator, io);
     defer perf.deinit();
 
     const si_result = try tester.send(PerfInstrument.set_integration, .{ &perf, "zig", "0.10.0" });
