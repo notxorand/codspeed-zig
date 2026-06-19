@@ -1,5 +1,5 @@
 <p align="center">
-  <h3 align="center">Codspeed - Zig Integration</h3>
+  <h3 align="center">codspeed.zig</h3>
 </p>
 
 ---
@@ -28,10 +28,10 @@ benchmark_exe.root_module.addImport(
 ```zig
 const Codspeed = @import("codspeed");
 
-pub fn main() !void {
-    const alloc = std.heap.c_allocator; // or std.heap.page_allocator
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
-    const codspeed = Codspeed.init(alloc, "src/benchmarks.zig");
+    const codspeed = Codspeed.init(allocator, "src/benchmarks.zig");
     defer codspeed.deinit();
 
     try codspeed.bench("benchmark_name", benchmarkThisCode);
@@ -54,10 +54,10 @@ You can manually start and stop the instrumentation around a code block for more
 ```zig
 const Codspeed = @import("codspeed");
 
-pub fn main() !void {
-    const alloc = std.heap.c_allocator; // or std.heap.page_allocator
-
-    const codspeed = Codspeed.init(alloc, "src/benchmarks.zig");
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    
+    const codspeed = Codspeed.init(allocator, "src/benchmarks.zig");
     defer codspeed.deinit();
 
     try codspeed.start("benchmark_name");
@@ -71,8 +71,7 @@ pub fn main() !void {
 
 ## Recommendations
 
-- Use `std.heap.c_allocator` for benchmarks. It will provide more stable and consistent results.
-- Avoid benchmarking logic that involves system calls. They cannot be reliably instrumented and will often be excluded in Codspeed's dashboard. For instance, do file I/O operations outside of the benchmarked code.
++ Avoid benchmarking logic that involves system calls. They cannot be reliably instrumented and will often be excluded in Codspeed's dashboard. For instance, do file I/O operations outside of the benchmarked code.
 
 ## Known Issues
 

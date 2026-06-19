@@ -1,28 +1,37 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const perf = @import("perf.zig");
+const shared = @import("../shared.zig");
+const analysis = @import("analysis.zig");
+const AnalysisInstrument = analysis.AnalysisInstrument;
 const valgrind = @import("valgrind.zig");
 const ValgrindInstrument = valgrind.ValgrindInstrument;
+const walltime = @import("walltime.zig");
+const WalltimeInstrument = walltime.WalltimeInstrument;
 
-pub const InstrumentHooks = union(enum) {
+pub const Instrument = union(enum) {
     valgrind: ValgrindInstrument,
-    perf: perf.PerfInstrument,
+    walltime: WalltimeInstrument,
+    analysis: AnalysisInstrument,
     none: void,
 
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !Self {
-        if (ValgrindInstrument.is_instrumented()) {
-            return Self{ .valgrind = ValgrindInstrument.init(allocator) };
+        // Valgrind/Callgrind client requests only work on Linux.
+        if (comptime builtin.os.tag == .linux) {
+            if (ValgrindInstrument.init(allocator)) |valgrind_inst| {
+                return Self{ .valgrind = valgrind_inst };
+            } else |_| {}
         }
 
-        var perf_inst = perf.PerfInstrument.init(allocator, io) catch {
-            return Self{ .none = {} };
-        };
-        if (perf_inst.is_instrumented()) {
-            return Self{ .perf = perf_inst };
-        }
+        if (AnalysisInstrument.init(allocator, io)) |analysis_inst| {
+            return Self{ .analysis = analysis_inst };
+        } else |_| {}
+
+        if (WalltimeInstrument.init(allocator, io)) |walltime_inst| {
+            return Self{ .walltime = walltime_inst };
+        } else |_| {}
 
         return Self{ .none = {} };
     }
@@ -30,7 +39,8 @@ pub const InstrumentHooks = union(enum) {
     pub inline fn deinit(self: *Self) void {
         switch (self.*) {
             .valgrind => {},
-            .perf => self.perf.deinit(),
+            .walltime => self.walltime.deinit(),
+            .analysis => self.analysis.deinit(),
             .none => {},
         }
     }
@@ -38,34 +48,37 @@ pub const InstrumentHooks = union(enum) {
     pub inline fn is_instrumented(self: *Self) bool {
         return switch (self.*) {
             .valgrind => ValgrindInstrument.is_instrumented(),
-            .perf => |perf_inst| {
-                var mutable_perf = perf_inst;
-                return mutable_perf.is_instrumented();
-            },
+            .walltime => true,
+            .analysis => true,
             .none => false,
         };
     }
 
     pub inline fn start_benchmark(self: *Self) !void {
-        if (self.* == .perf) {
-            return self.perf.start_benchmark();
+        if (self.* == .walltime) {
+            return self.walltime.start_benchmark();
         } else if (self.* == .valgrind) {
             return ValgrindInstrument.start_benchmark();
+        } else if (self.* == .analysis) {
+            return self.analysis.start_benchmark();
         }
     }
 
     pub inline fn stop_benchmark(self: *Self) !void {
         if (self.* == .valgrind) {
             return ValgrindInstrument.stop_benchmark();
-        } else if (self.* == .perf) {
-            return self.perf.stop_benchmark();
+        } else if (self.* == .walltime) {
+            return self.walltime.stop_benchmark();
+        } else if (self.* == .analysis) {
+            return self.analysis.stop_benchmark();
         }
     }
 
-    pub inline fn set_executed_benchmark(self: *Self, pid: u32, uri: []const u8) !void {
+    pub inline fn set_executed_benchmark(self: *Self, pid: i32, uri: []const u8) !void {
         switch (self.*) {
             .valgrind => try self.valgrind.set_executed_benchmark(pid, uri),
-            .perf => try self.perf.set_executed_benchmark(pid, uri),
+            .walltime => try self.walltime.set_executed_benchmark(pid, uri),
+            .analysis => try self.analysis.set_executed_benchmark(pid, uri),
             .none => {},
         }
     }
@@ -73,8 +86,17 @@ pub const InstrumentHooks = union(enum) {
     pub inline fn set_integration(self: *Self, name: []const u8, version: []const u8) !void {
         switch (self.*) {
             .valgrind => try self.valgrind.set_integration(name, version),
-            .perf => try self.perf.set_integration(name, version),
+            .walltime => try self.walltime.set_integration(name, version),
+            .analysis => try self.analysis.set_integration(name, version),
             .none => {},
+        }
+    }
+
+    pub inline fn add_marker(self: *Self, pid: i32, marker: shared.MarkerType) !void {
+        if (self.* == .walltime) {
+            return self.walltime.add_marker(pid, marker);
+        } else if (self.* == .analysis) {
+            return self.analysis.add_marker(pid, marker);
         }
     }
 };

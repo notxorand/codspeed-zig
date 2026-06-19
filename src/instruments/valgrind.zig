@@ -7,7 +7,11 @@ pub const ValgrindInstrument = struct {
     allocator: std.mem.Allocator,
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) Self {
+    pub fn init(allocator: std.mem.Allocator) !Self {
+        if (!ValgrindInstrument.is_instrumented()) {
+            return error.NotInstrumented;
+        }
+
         return Self{
             .allocator = allocator,
         };
@@ -18,17 +22,16 @@ pub const ValgrindInstrument = struct {
     }
 
     pub inline fn set_integration(self: Self, name: []const u8, version: []const u8) !void {
-        const metadata_ = try std.fmt.allocPrint(
+        const metadata = try std.fmt.allocPrint(
             self.allocator,
             "Metadata: {s} {s}",
             .{ name, version },
         );
-        defer self.allocator.free(metadata_);
-
-        const metadata = try self.allocator.dupeZ(u8, metadata_);
         defer self.allocator.free(metadata);
+        const metadata_z = try self.allocator.dupeZ(u8, metadata);
+        defer self.allocator.free(metadata_z);
 
-        valgrind.callgrind_dump_stats_at(metadata.ptr);
+        valgrind.callgrind_dump_stats_at(metadata_z.ptr);
     }
 
     pub inline fn start_benchmark() void {
@@ -44,12 +47,12 @@ pub const ValgrindInstrument = struct {
         }
     }
 
-    pub inline fn set_executed_benchmark(self: Self, pid: u32, uri_: []const u8) !void {
+    pub inline fn set_executed_benchmark(self: Self, pid: i32, _uri: []const u8) !void {
         _ = pid;
 
-        const uri = try self.allocator.dupeZ(u8, uri_);
+        const uri = try self.allocator.dupeZ(u8, _uri);
         defer self.allocator.free(uri);
 
-        valgrind.callgrind_dump_stats_at(uri.ptr);
+        valgrind.callgrind_dump_stats_at(uri);
     }
 };

@@ -2,6 +2,8 @@
 
 const std = @import("std");
 
+const utils = @import("./utils.zig");
+
 pub fn deserializeAlloc(stream: anytype, allocator: std.mem.Allocator, comptime T: type) !T {
     return switch (@typeInfo(T)) {
         .void => {},
@@ -49,7 +51,7 @@ pub fn deserializeBuffer(comptime T: type, source: *[]const u8) T {
     };
 }
 
-pub fn serialize(stream: anytype, value: anytype) !void {
+pub fn serialize(stream: anytype, value: anytype) @TypeOf(stream.*).Error!void {
     const T = @TypeOf(value);
     return switch (@typeInfo(T)) {
         .void => {},
@@ -91,9 +93,9 @@ fn deserializeBufferInt(comptime T: type, source_ptr: *[]const u8) T {
     const source = source_ptr.*;
     if (bytesRequired <= source.len) {
         var tmp: [bytesRequired]u8 = undefined;
-        @memcpy(&tmp, source[0..bytesRequired]);
+        std.mem.copy(u8, &tmp, source[0..bytesRequired]);
         source_ptr.* = source[bytesRequired..];
-        return std.mem.readInt(T, &tmp, .little);
+        return std.mem.readIntLittle(T, &tmp);
     } else {
         invalidProtocol("Buffer ran out of bytes too soon.");
     }
@@ -155,12 +157,12 @@ fn deserializeBufferUnion(comptime T: type, comptime info: std.builtin.Type.Unio
 
 fn deserializeBufferArray(comptime info: std.builtin.Type.Array, source_ptr: *[]const u8) [info.len]info.child {
     const T = [info.len]info.child;
-    if (info.sentinel_ptr != null) @compileError("Unsupported array type: sentinel");
+    if (info.sentinel_ptr != null) unsupportedType(T);
     var value: T = undefined;
     if (info.child == u8) {
         const source = source_ptr.*;
         if (info.len <= source.len) {
-            @memcpy(&value, source[0..info.len]);
+            std.mem.copy(u8, &value, source[0..info.len]);
             source_ptr.* = source[info.len..];
         } else {
             invalidProtocol("The stream end was found before all required bytes were read.");
@@ -174,9 +176,10 @@ fn deserializeBufferArray(comptime info: std.builtin.Type.Array, source_ptr: *[]
 }
 
 fn deserializeBufferPointer(comptime info: std.builtin.Type.Pointer, source_ptr: *[]const u8) []const info.child {
-    if (info.sentinel_ptr != null) @compileError("Unsupported pointer type: sentinel");
+    const T = []const info.child;
+    if (info.sentinel_ptr != null) unsupportedType(T);
     switch (info.size) {
-        .one => @compileError("Unsupported pointer type: one"),
+        .one => unsupportedType(T),
         .slice => {
             const len = @as(usize, @intCast(deserializeBufferInt(u64, source_ptr)));
             if (info.child == u8) {
@@ -190,16 +193,16 @@ fn deserializeBufferPointer(comptime info: std.builtin.Type.Pointer, source_ptr:
             } else {
                 // we can't support a variable slice of types where the stream format
                 // differs from in-memory format without allocating.
-                @compileError("Unsupported pointer type: slice of non-u8");
+                unsupportedType(T);
             }
         },
-        .c => @compileError("Unsupported pointer type: c"),
-        .many => @compileError("Unsupported pointer type: many"),
+        .c => unsupportedType(T),
+        .many => unsupportedType(T),
     }
 }
 
 fn deserializeBool(stream: anytype) !bool {
-    switch (try stream.readInt(u8, .little)) {
+    switch (try stream.takeInt(u8, .little)) {
         0 => return false,
         1 => return true,
         else => invalidProtocol("Boolean values should be encoded as a single byte with value 0 or 1 only."),
@@ -208,8 +211,8 @@ fn deserializeBool(stream: anytype) !bool {
 
 fn deserializeFloat(stream: anytype, comptime T: type) !T {
     switch (T) {
-        f32 => return @as(T, @bitCast(try stream.readInt(u32, .little))),
-        f64 => return @as(T, @bitCast(try stream.readInt(u64, .little))),
+        f32 => return @as(T, @bitCast(try stream.takeInt(u32, .little))),
+        f64 => return @as(T, @bitCast(try stream.takeInt(u64, .little))),
         else => unsupportedType(T),
     }
 }
@@ -231,7 +234,7 @@ fn deserializeInt(stream: anytype, comptime T: type) !T {
 }
 
 fn deserializeOptionalAlloc(stream: anytype, allocator: std.mem.Allocator, comptime T: type) !?T {
-    switch (try stream.readInt(u8, .little)) {
+    switch (try stream.takeInt(u8, .little)) {
         // None
         0 => return null,
         // Some
@@ -241,7 +244,7 @@ fn deserializeOptionalAlloc(stream: anytype, allocator: std.mem.Allocator, compt
 }
 
 fn deserializeOptional(stream: anytype, comptime T: type) !?T {
-    switch (try stream.readInt(u8, .little)) {
+    switch (try stream.takeInt(u8, .little)) {
         // None
         0 => return null,
         // Some
@@ -251,9 +254,10 @@ fn deserializeOptional(stream: anytype, comptime T: type) !?T {
 }
 
 fn deserializePointerAlloc(stream: anytype, comptime info: std.builtin.Type.Pointer, allocator: std.mem.Allocator) ![]info.child {
-    if (info.sentinel_ptr != null) @compileError("Unsupported pointer type: sentinel");
+    const T = []info.child;
+    if (info.sentinel_ptr != null) unsupportedType(T);
     switch (info.size) {
-        .one => @compileError("Unsupported pointer type: one"),
+        .one => unsupportedType(T),
         .slice => {
             const len = @as(usize, @intCast(try stream.takeInt(u64, .little)));
             var memory = try allocator.alloc(info.child, len);
@@ -266,14 +270,14 @@ fn deserializePointerAlloc(stream: anytype, comptime info: std.builtin.Type.Poin
             }
             return memory;
         },
-        .c => @compileError("Unsupported pointer type: c"),
-        .many => @compileError("Unsupported pointer type: many"),
+        .c => unsupportedType(T),
+        .many => unsupportedType(T),
     }
 }
 
 fn deserializeArrayAlloc(stream: anytype, comptime info: std.builtin.Type.Array, allocator: std.mem.Allocator) ![info.len]info.child {
     const T = [info.len]info.child;
-    if (info.sentinel_ptr != null) @compileError("Unsupported array type: sentinel");
+    if (info.sentinel_ptr != null) unsupportedType(T);
     var value: T = undefined;
     if (info.child == u8) {
         const amount = try stream.readAll(value[0..]);
@@ -290,7 +294,7 @@ fn deserializeArrayAlloc(stream: anytype, comptime info: std.builtin.Type.Array,
 
 fn deserializeArray(stream: anytype, comptime info: std.builtin.Type.Array) ![info.len]info.child {
     const T = [info.len]info.child;
-    if (info.sentinel_ptr != null) @compileError("Unsupported array type: sentinel");
+    if (info.sentinel_ptr != null) unsupportedType(T);
     var value: T = undefined;
     if (info.child == u8) {
         const amount = try stream.readAll(value[0..]);
@@ -360,20 +364,20 @@ fn deserializeUnion(stream: anytype, comptime info: std.builtin.Type.Union, comp
     }
 }
 
-pub fn serializeBool(stream: anytype, value: bool) @TypeOf(stream).Error!void {
+pub fn serializeBool(stream: anytype, value: bool) @TypeOf(stream.*).Error!void {
     const code: u8 = if (value) @as(u8, 1) else @as(u8, 0);
-    return stream.writeInt(u8, code, .little);
+    return stream.writeIntLittle(u8, code);
 }
 
-pub fn serializeFloat(stream: anytype, comptime T: type, value: T) @TypeOf(stream).Error!void {
+pub fn serializeFloat(stream: anytype, comptime T: type, value: T) @TypeOf(stream.*).Error!void {
     switch (T) {
-        f32 => try stream.writeInt(u32, @as(u32, @bitCast(value)), .little),
-        f64 => try stream.writeInt(u64, @as(u64, @bitCast(value)), .little),
+        f32 => try stream.writeIntLittle(u32, @as(u32, @bitCast(value))),
+        f64 => try stream.writeIntLittle(u64, @as(u64, @bitCast(value))),
         else => unsupportedType(T),
     }
 }
 
-pub fn serializeInt(stream: anytype, comptime T: type, value: T) !void {
+pub fn serializeInt(stream: anytype, comptime T: type, value: T) @TypeOf(stream.*).Error!void {
     switch (T) {
         i8 => try stream.writeInt(i8, value, .little),
         i16 => try stream.writeInt(i16, value, .little),
@@ -389,7 +393,7 @@ pub fn serializeInt(stream: anytype, comptime T: type, value: T) !void {
     }
 }
 
-pub fn serializeOptional(stream: anytype, comptime T: type, value: ?T) @TypeOf(stream).Error!void {
+pub fn serializeOptional(stream: anytype, comptime T: type, value: ?T) @TypeOf(stream.*).Error!void {
     if (value) |actual| {
         try stream.writeInt(u8, 1, .little);
         try serialize(stream, actual);
@@ -399,7 +403,7 @@ pub fn serializeOptional(stream: anytype, comptime T: type, value: ?T) @TypeOf(s
     }
 }
 
-pub fn serializePointer(stream: anytype, comptime info: std.builtin.Type.Pointer, comptime T: type, value: T) !void {
+pub fn serializePointer(stream: anytype, comptime info: std.builtin.Type.Pointer, comptime T: type, value: T) @TypeOf(stream.*).Error!void {
     if (info.sentinel_ptr != null) unsupportedType(T);
     switch (info.size) {
         .one => unsupportedType(T),
@@ -418,7 +422,7 @@ pub fn serializePointer(stream: anytype, comptime info: std.builtin.Type.Pointer
     }
 }
 
-pub fn serializeArray(stream: anytype, comptime info: std.builtin.Type.Array, comptime T: type, value: T) !void {
+pub fn serializeArray(stream: anytype, comptime info: std.builtin.Type.Array, comptime T: type, value: T) @TypeOf(stream.*).Error!void {
     if (info.sentinel_ptr != null) unsupportedType(T);
     if (info.child == u8) {
         try stream.writeAll(value);
@@ -429,18 +433,18 @@ pub fn serializeArray(stream: anytype, comptime info: std.builtin.Type.Array, co
     }
 }
 
-pub fn serializeStruct(stream: anytype, comptime info: std.builtin.Type.Struct, comptime T: type, value: T) !void {
+pub fn serializeStruct(stream: anytype, comptime info: std.builtin.Type.Struct, comptime T: type, value: T) @TypeOf(stream.*).Error!void {
     inline for (info.fields) |field| {
         try serialize(stream, @field(value, field.name));
     }
 }
 
-pub fn serializeEnum(stream: anytype, comptime T: type, value: T) !void {
+pub fn serializeEnum(stream: anytype, comptime T: type, value: T) @TypeOf(stream.*).Error!void {
     const tag: u32 = @intFromEnum(value);
     try serialize(stream, tag);
 }
 
-pub fn serializeUnion(stream: anytype, comptime info: std.builtin.Type.Union, comptime T: type, value: T) !void {
+pub fn serializeUnion(stream: anytype, comptime info: std.builtin.Type.Union, comptime T: type, value: T) @TypeOf(stream.*).Error!void {
     if (info.tag_type) |UnionTagType| {
         const tag: u32 = @intFromEnum(value);
         try serialize(stream, tag);
@@ -459,7 +463,8 @@ fn unsupportedType(comptime T: type) noreturn {
 }
 
 fn invalidProtocol(comptime message: []const u8) noreturn {
-    @panic("Invalid protocol detected: " ++ message);
+    utils.print("Invalid protocol detected: %.*s\n", .{ @as(c_int, @intCast(message.len)), message.ptr });
+    std.process.exit(1);
 }
 
 test "example" {
